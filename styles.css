@@ -1,6 +1,6 @@
 body {
     width: 95vw;
-    height: 100%;
+    height: 100vh;
     background: linear-gradient(144deg, #a7c7e7 0%, #7fb3d5 100%);
     color: #222;
     font-family: 'Segoe UI', Arial, sans-serif;
