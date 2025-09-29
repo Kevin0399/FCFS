@@ -1,327 +1,268 @@
-// Genera operación aleatoria con dos operandos
-function generarOperacion() {
-  const operaciones = ["+", "-", "*", "/", "%", "^"];
-  const op = operaciones[Math.floor(Math.random() * operaciones.length)];
-  const a = Math.floor(Math.random() * 10) + 1;
-  const b = Math.floor(Math.random() * 10) + 1;
-  return { op, a, b };
-}
+// ================================
+// Variables globales
+// ================================
+let procesos = []; // Todos los procesos generados
+let nuevos = []; // Cola de procesos en estado Nuevo
+let listos = []; // Cola de procesos Listos
+let bloqueados = []; // Cola de procesos Bloqueados
+let terminados = []; // Procesos que ya terminaron
+let procesoEnEjecucion = null; // Proceso que esta en CPU
+let relojGlobal = 0; // Tiempo global de simulacion
+let intervalo = null; // Intervalo principal de simulacion
+let pausado = false; // Pausa de la simulacion
+let numProcesos = 0; // Cantidad total de procesos
+let idContador = 1; // Contador para asignar IDs unicos
 
-// Crea un proceso con tiempos y operación
-function crearProceso(id, global) {
-  const TME = Math.floor(Math.random() * 15) + 6; // 6-20 s
-  const { op, a, b } = generarOperacion();
-  return {
-    id,
-    tme: TME,
-    transcurrido: 0,
-    restante: TME,
-    status: "NUEVO",
-    operacion: `${a} ${op} ${b}`,
-    tiempoLlegada: global.transcurrido, // tiempo de llegada basado en contador global
-    tiempoRespuesta: null,
-    tiempoFinalizacion: null,
-    tiempoRetorno: null,
-    tiempoEspera: 0,
-    tiempoServicio: 0,
-    resultado: null
-  };
-}
-
-// Mostrar tabla dinámica (listos y bloqueados)
-function mostrarTabla(tablaId, procesos, incluirTranscurrido = false) {
-  const thead = document.querySelector(`#${tablaId} thead`);
-  thead.innerHTML = "<tr><th>#</th><th>ID</th><th>TME (s)</th><th>Operación / Tiempo (s)</th></tr>";
-
-  const tbody = document.querySelector(`#${tablaId} tbody`);
-  tbody.innerHTML = "";
-
-  for (let i = 0; i < 3; i++) {
-    const p = procesos[i];
-    const fila = document.createElement("tr");
-
-    if (p) {
-      fila.innerHTML = `
-                <td>${i + 1}</td>
-                <td>${p.id}</td>
-                <td>${p.tme}</td>
-                <td>${incluirTranscurrido ? p.transcurrido.toFixed(1) : p.operacion}</td>
-            `;
-    } else {
-      fila.innerHTML = `<td>${i + 1}</td><td colspan="3">[ vacío ]</td>`;
+// ================================
+// Fase Inicial -> crear procesos
+// ================================
+document.getElementById("btnIniciar").addEventListener("click", () => {
+    const cantidad = parseInt(document.getElementById("numProcesos").value);
+    if (isNaN(cantidad) || cantidad <= 0) {
+        alert("Por favor ingresa un numero valido de procesos");
+        return;
     }
+    numProcesos = cantidad;
+    generarProcesos(numProcesos);
 
-    tbody.appendChild(fila);
-  }
+    // Pasar de Fase Inicial a Fase Ejecucion
+    document.getElementById("faseInicial").style.display = "none";
+    document.getElementById("faseEjecucion").style.display = "block";
+    document.getElementById("faseResultados").style.display = "none";
+
+    // Iniciar el tick cada segundo
+    if (!intervalo) intervalo = setInterval(tick, 1000);
+});
+
+// ================================
+// Generar procesos aleatorios
+// ================================
+const generarProcesos = (n) => {
+    for (let i = 0; i < n; i++) {
+        const tiempoMax = Math.floor(Math.random() * 15) + 6; // TME entre 6 y 20
+        let a = Math.floor(Math.random() * 10) + 1;
+        let b = Math.floor(Math.random() * 10) + 1;
+        let ops = ["+", "-", "*", "/", "%"];
+        let op = ops[Math.floor(Math.random() * ops.length)];
+
+        // Evitar division entre cero
+        if ((op === "/" || op === "%") && b === 0) b = 1;
+
+        // Crear objeto proceso
+        const proceso = {
+            id: idContador++,
+            op: `${a} ${op} ${b}`,
+            a,
+            b,
+            operador: op,
+            tiempoMax,
+            tiempoTrans: 0,
+            estado: "Nuevo",
+            llegada: null,
+            finalizacion: null,
+            retorno: null,
+            respuesta: null,
+            espera: 0,
+            servicio: 0,
+            resultado: null,
+            error: false,
+            bloqueadoRestante: 0
+        };
+        nuevos.push(proceso);
+    }
+    render(); // Actualizar pantalla
 }
 
-// Arreglo global de bloqueados
-let bloqueados = [];
+// ================================
+// Bucle principal de la simulacion
+// ================================
+const tick = () => {
+    if (pausado) return;
 
-// Manejo de formulario
-const generarProcesos = () => {
-  document.getElementById("formProcesos").addEventListener("submit", e => {
-    e.preventDefault();
+    // Admitir procesos desde Nuevos a Listos si hay espacio (max 4 en memoria)
+    while (listos.length + bloqueados.length + (procesoEnEjecucion ? 1 : 0) < 4 && nuevos.length > 0) {
+        let proc = nuevos.shift();
+        proc.estado = "Listo";
 
-    const num = parseInt(document.getElementById("numProcesos").value);
-    if (isNaN(num) || num <= 0) { alert('Ingrese un valor válido'); return; }
-
-    let global = { transcurrido: 0 }; // contador global en segundos
-    const procesos = [];
-    for (let i = 1; i <= num; i++) procesos.push(crearProceso(i, global));
-
-    // Memoria: máximo 4
-    const enMemoria = new Array(4).fill(null);
-    const primeros = procesos.slice(0, 4);
-    primeros.forEach((p, idx) => {
-      p.memoriaIndex = idx;
-      p.status = idx === 0 ? "EJECUCION" : "LISTO";
-      p.arrivalOrder = idx + 1; // orden FCFS
-      p.tiempoLlegada = global.transcurrido; // tiempo de llegada en memoria
-      enMemoria[idx] = p;
-    });
-    const nuevos = procesos.slice(4);
-
-    // Cola de listos
-    let listos = enMemoria.filter((p, idx) => p && idx !== 0);
-    const ejecucion = enMemoria[0] || null;
-
-    iniciarEjecucion(enMemoria, nuevos, listos, ejecucion, num, global);
-  });
-};
-
-// Función principal de ejecución
-const iniciarEjecucion = async (enMemoria, nuevos, listos, ejecucion, numProcesos, global) => {
-  const divContGlobal = document.getElementById('contadorGlobal');
-  divContGlobal.classList.add('contProcesos');
-
-  document.getElementById('formProcesos').style.display = "none";
-
-  // UI nuevos
-  const divNuevos = document.getElementById('nuevos');
-  const contNuevos = document.createElement('div');
-  contNuevos.classList.add('contProcesos');
-  divNuevos.appendChild(contNuevos);
-  contNuevos.innerText = `Procesos Nuevos: ${nuevos.length}`;
-
-  const mostrarEjecucion = document.getElementById('procesoEjecucion');
-  const mostrarBloqueo = document.getElementById('procesoBloqueado');
-  const tablaTerminados = document.getElementById('tablaTerminados');
-  tablaTerminados.classList.add('contProcesos');
-  tablaTerminados.tHead.innerHTML = "<tr><th>ID</th><th>Operación</th><th>Resultado</th></tr>";
-
-  let procesosTerminados = [];
-
-  // Contador de llegada para FCFS
-  let memArrivalCounter = enMemoria.filter(p => p).length;
-
-  // Sincroniza la cola de listos según memoria y FCFS
-  const syncListosConMemoria = () => {
-    const candidatos = enMemoria.filter(p => p && p.status === "LISTO")
-      .sort((a, b) => (a.arrivalOrder || 0) - (b.arrivalOrder || 0));
-
-    listos.length = 0;
-    for (let i = 0; i < candidatos.length && listos.length < 3; i++) listos.push(candidatos[i]);
-
-    mostrarTabla("tablaListos", listos, true);
-  };
-
-  // Inicializa bloqueo concurrente
-  iniciarBloqueoConcurrente(mostrarBloqueo, enMemoria, syncListosConMemoria, global);
-
-  // Helper: incorporar bloqueados listos
-  const intentarTraerBloqueados = () => {
-    for (let i = 0; i < bloqueados.length; i++) {
-      const bp = bloqueados[i];
-      if (bp.readyToList) {
-        const numListosEnMemoria = enMemoria.filter(x => x && x.status === "LISTO").length;
-        if (numListosEnMemoria < 3) {
-          bp.status = "LISTO"; bp.readyToList = false;
-          bloqueados.splice(i, 1); i--;
-        } else { bp.status = "LISTO"; }
-      }
-    }
-    syncListosConMemoria();
-  };
-
-  // Bucle principal de ejecución
-  while (procesosTerminados.length < numProcesos) {
-    if (!ejecucion) {
-      intentarTraerBloqueados();
-      if (listos.length > 0) {
-        ejecucion = listos.shift();
-        ejecucion.status = "EJECUCION";
-        if (ejecucion.tiempoRespuesta === null) {
-          // tiempoRespuesta: primer momento en que el proceso entra a CPU
-          ejecucion.tiempoRespuesta = global.transcurrido - ejecucion.tiempoLlegada;
-          if (ejecucion.tiempoRespuesta < 0) ejecucion.tiempoRespuesta = 0;
+        // Primeros 4 procesos llegan en 0
+        if (proc.id <= 4) {
+            proc.llegada = 0;
+        } else {
+            proc.llegada = relojGlobal;
         }
-      } else { await new Promise(r => setTimeout(r, 200)); continue; }
+
+        listos.push(proc);
     }
 
-    mostrarTabla("tablaListos", listos, true);
-    await cronometroAsync(ejecucion, global, mostrarEjecucion);
-    mostrarEjecucion.innerHTML = "";
+    // Si no hay proceso en ejecucion, tomar el siguiente de listos
+    if (!procesoEnEjecucion && listos.length > 0) {
+        procesoEnEjecucion = listos.shift();
+        procesoEnEjecucion.estado = "Ejecucion";
 
-    const idxMem = ejecucion.memoriaIndex;
+        // Tiempo de respuesta: registrar solo la PRIMERA vez que entra a CPU
+        if (procesoEnEjecucion.respuesta === null) {
+            procesoEnEjecucion.respuesta = relojGlobal - procesoEnEjecucion.llegada;
+            // Esto asegura que aunque los primeros procesos lleguen en 0, el tiempo de respuesta se calcula correcto
+        }
 
-    if (ejecucion.status === "BLOQUEADO") {
-      ejecucion.transcurridoBloqueado = ejecucion.transcurridoBloqueado || 0;
-      bloqueados.push(ejecucion);
-    } else {
-      // TERMINADO / ERROR
-      ejecucion.resultado = ejecucion.status === "ERROR"
-        ? "ERROR" : math.evaluate(ejecucion.operacion);
-      if (typeof ejecucion.resultado === "number") ejecucion.resultado = ejecucion.resultado.toFixed(2);
-      ejecucion.status = "TERMINADO";
-
-      // Calculamos métricas finales usando el contador global en segundos
-      ejecucion.tiempoFinalizacion = global.transcurrido;
-      ejecucion.tiempoServicio = ejecucion.transcurrido;
-      ejecucion.tiempoRetorno = ejecucion.tiempoFinalizacion - ejecucion.tiempoLlegada;
-      ejecucion.tiempoEspera = ejecucion.tiempoRetorno - ejecucion.tiempoServicio;
-      if (ejecucion.tiempoRespuesta === null) ejecucion.tiempoRespuesta = ejecucion.tiempoEspera;
-
-      procesosTerminados.push(ejecucion);
-
-      const filaTerminado = document.createElement('tr');
-      filaTerminado.innerHTML = `<td>${ejecucion.id}</td><td>${ejecucion.operacion}</td><td>${ejecucion.resultado}</td>`;
-      tablaTerminados.appendChild(filaTerminado);
-
-      if (typeof idxMem === "number") enMemoria[idxMem] = null;
+        // Marcar primer tick en CPU para no incrementar tiempoTrans todavía
+        procesoEnEjecucion._nuevoEnCPU = true;
     }
 
-    intentarTraerBloqueados();
-    // Al llenar un espacio de memoria libre con un nuevo proceso
-    if (typeof idxMem === "number" && enMemoria[idxMem] === null && nuevos.length > 0) {
-      const siguienteNuevo = nuevos.shift();
-      siguienteNuevo.memoriaIndex = idxMem;
-      siguienteNuevo.status = "LISTO";
-      siguienteNuevo.arrivalOrder = ++memArrivalCounter;
-      siguienteNuevo.tiempoLlegada = global.transcurrido; // se asigna al entrar a memoria
-      enMemoria[idxMem] = siguienteNuevo;
-      syncListosConMemoria();
-      contNuevos.innerText = `Procesos Nuevos: ${nuevos.length}`;
+    // Ejecutar el proceso actual
+    if (procesoEnEjecucion) {
+        if (procesoEnEjecucion._nuevoEnCPU) {
+            procesoEnEjecucion._nuevoEnCPU = false; // No incrementar en primer tick
+        } else {
+            procesoEnEjecucion.tiempoTrans++;
+            procesoEnEjecucion.servicio++;
+        }
+
+        if (procesoEnEjecucion.tiempoTrans >= procesoEnEjecucion.tiempoMax) {
+            finalizarProceso(procesoEnEjecucion);
+            procesoEnEjecucion = null;
+        }
     }
 
-    if (listos.length > 0) {
-      ejecucion = listos.shift();
-      ejecucion.status = "EJECUCION";
-      if (ejecucion.tiempoRespuesta === null) {
-        ejecucion.tiempoRespuesta = global.transcurrido - ejecucion.tiempoLlegada;
-        if (ejecucion.tiempoRespuesta < 0) ejecucion.tiempoRespuesta = 0;
-      }
-      mostrarTabla("tablaListos", listos, true);
-    } else { ejecucion = null; }
-  }
-
-  mostrarTabla("tablaListos", listos, true);
-
-  // Mostrar métricas finales
-  mostrarMetricasFinales(procesosTerminados);
-};
-
-// Función para mostrar métricas finales de todos los procesos
-const mostrarMetricasFinales = (procesosTerminados) => {
-  const contenedor = document.createElement('div');
-  contenedor.classList.add('contProcesos');
-  contenedor.innerHTML = "<h2>Métricas finales de procesos</h2>";
-
-  const tabla = document.createElement('table');
-  tabla.classList.add('infoProceso');
-
-  const thead = document.createElement('thead');
-  thead.innerHTML = `<tr>
-        <th>ID</th><th>Operación</th><th>Resultado</th>
-        <th>Llegada (s)</th><th>Respuesta (s)</th><th>Servicio (s)</th>
-        <th>Espera (s)</th><th>Retorno (s)</th><th>Status</th>
-    </tr>`;
-  tabla.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-  procesosTerminados.forEach(p => {
-    const fila = document.createElement('tr');
-    fila.innerHTML = `
-            <td>${p.id}</td>
-            <td>${p.operacion}</td>
-            <td>${p.resultado}</td>
-            <td>${p.tiempoLlegada.toFixed(1)}</td>
-            <td>${p.tiempoRespuesta.toFixed(1)}</td>
-            <td>${p.tiempoServicio.toFixed(1)}</td>
-            <td>${p.tiempoEspera.toFixed(1)}</td>
-            <td>${p.tiempoRetorno.toFixed(1)}</td>
-            <td>${p.status}</td>
-        `;
-    tbody.appendChild(fila);
-  });
-
-  tabla.appendChild(tbody);
-  contenedor.appendChild(tabla);
-  document.getElementById('contenMain').appendChild(contenedor);
-};
-
-// Bloqueados concurrente
-const iniciarBloqueoConcurrente = (mostrarBloqueo, enMemoria, syncListosConMemoria, global) => {
-  const intervalo = 0.1; // en segundos
-  const tiempoBloqueo = 8; // 8 segundos
-  setInterval(() => {
-    if (bloqueados.length === 0) { mostrarBloqueo.innerHTML = ""; return; }
-
-    let html = `<table class="infoProceso"><tr><th colspan="3">Procesos Bloqueados</th></tr><tr><th>ID</th><th>Transcurrido (s)</th><th>Restante (s)</th></tr>`;
-
-    bloqueados.forEach((p, i) => {
-      p.transcurridoBloqueado = p.transcurridoBloqueado || 0;
-      p.transcurridoBloqueado += intervalo;
-      const restante = tiempoBloqueo - p.transcurridoBloqueado;
-
-      html += `<tr><td>${p.id}</td><td>${p.transcurridoBloqueado.toFixed(1)}</td><td>${Math.max(restante, 0).toFixed(1)}</td></tr>`;
-
-      if (p.transcurridoBloqueado >= tiempoBloqueo) {
-        p.readyToList = true;
-        const numListosEnMemoria = enMemoria.filter(x => x && x.status === "LISTO").length;
-        if (numListosEnMemoria < 3) {
-          p.status = "LISTO"; p.readyToList = false;
-          bloqueados.splice(i, 1); i--;
-          syncListosConMemoria();
-        } else { p.status = "LISTO"; }
-      }
+    // Actualizar bloqueados
+    bloqueados.forEach((p, idx) => {
+        p.bloqueadoRestante--;
+        if (p.bloqueadoRestante <= 0) {
+            p.estado = "Listo";
+            listos.push(p);
+            bloqueados.splice(idx, 1);
+        }
     });
 
-    mostrarBloqueo.innerHTML = html + "</table>";
-  }, intervalo * 1000);
-};
+    // Verificar si todos los procesos terminaron
+    if (terminados.length === numProcesos) {
+        clearInterval(intervalo);
+        intervalo = null;
+        let btnResultados = document.createElement('button');
+        btnResultados.innerText = "Ver Resultados";
+        document.getElementById('btnVerResultados').appendChild(btnResultados); 
+        btnResultados.addEventListener(`click`, () => {
+            mostrarResultados();
+        });
+    }
 
-// Cronómetro asíncrono basado en contador global en segundos
-const cronometroAsync = async (proceso, global, mostrarEjecucion) => {
-  let tiempoTranscurrido = proceso.transcurrido || 0;
-  const intervalo = 0.1; // segundos
+    render(); // Actualizar pantalla
 
-  return new Promise((resolve) => {
-    const timer = setInterval(() => {
-      tiempoTranscurrido += intervalo;
-      proceso.transcurrido = tiempoTranscurrido;
-      proceso.restante = proceso.tme - tiempoTranscurrido;
-      global.transcurrido += intervalo;
+    // Incrementar reloj global AL FINAL del tick
+    relojGlobal++;
+}
 
-      mostrarEjecucion.innerHTML = `
-                <table class="infoProceso">
-                    <tr><th colspan="2">Información del Proceso</th></tr>
-                    <tr><td><b>ID:</b></td><td>${proceso.id}</td></tr>
-                    <tr><td><b>TME:</b></td><td>${proceso.tme.toFixed(1)} s</td></tr>
-                    <tr><td><b>Operación:</b></td><td>${proceso.operacion}</td></tr>
-                    <tr><td><b>Tiempo transcurrido:</b></td><td>${tiempoTranscurrido.toFixed(1)} s</td></tr>
-                    <tr><td><b>Tiempo restante:</b></td><td>${Math.max(proceso.restante, 0).toFixed(1)} s</td></tr>
-                </table>`;
+// ================================
+// Finalizar proceso (normal o error)
+// ================================
+const finalizarProceso = (p) => {
+    p.estado = "Terminado";
+    p.finalizacion = relojGlobal;
+    p.retorno = p.finalizacion - p.llegada;
+    p.espera = p.retorno - p.servicio;
 
-      document.getElementById('contadorGlobal').innerText = `Tiempo total global: ${global.transcurrido.toFixed(1)} s`;
+    try {
+        if (!p.error) p.resultado = eval(p.op); // Evaluar operacion
+        else p.resultado = "ERROR";
+    } catch {
+        p.resultado = "ERROR"; // Captura cualquier error de operacion
+    }
 
-      if (tiempoTranscurrido >= proceso.tme || proceso.status === "ERROR" || proceso.status === "BLOQUEADO") {
-        clearInterval(timer);
-        resolve();
-      }
-    }, intervalo * 1000);
-  });
-};
+    terminados.push(p);
+}
 
-// Inicializa la simulación
-document.getElementById('btnIniciar').addEventListener('click', () => generarProcesos());
+// ================================
+// Manejo de teclas: E, W, P, C
+// ================================
+document.addEventListener("keydown", (e) => {
+    const tecla = e.key.toUpperCase();
+
+    // Si estamos en pausa, solo permitir C para continuar
+    if (pausado && tecla !== "C") return; // Ignorar otras teclas mientras esta en pausa
+
+    if (tecla === "E" && procesoEnEjecucion) {
+        // Mandar proceso a bloqueados por E/S
+        procesoEnEjecucion.estado = "Bloqueado";
+        procesoEnEjecucion.bloqueadoRestante = 8; // 8 seg
+        bloqueados.push(procesoEnEjecucion);
+        procesoEnEjecucion = null;
+    } else if (tecla === "W" && procesoEnEjecucion) {
+        // Terminar proceso por error
+        procesoEnEjecucion.error = true;
+        finalizarProceso(procesoEnEjecucion);
+        procesoEnEjecucion = null;
+    } else if (tecla === "P") {
+        pausado = true; // Pausar simulacion
+    } else if (tecla === "C") {
+        pausado = false; // Continuar simulacion
+    }
+});
+// ================================
+// Renderizar en pantalla
+// ================================
+const render = () => {
+    document.getElementById("reloj").innerText = `Reloj: ${relojGlobal}`;
+    document.getElementById("nuevos").innerText = nuevos.length;
+
+    // Mostrar tabla de Listos
+    let htmlListos = "<tr><th>ID</th><th>TME</th><th>Trans</th></tr>";
+    listos.forEach(p => {
+        htmlListos += `<tr><td>${p.id}</td><td>${p.tiempoMax}</td><td>${p.tiempoTrans}</td></tr>`;
+    });
+    document.getElementById("tablaListos").innerHTML = htmlListos;
+
+    // Mostrar proceso en ejecucion
+    if (procesoEnEjecucion) {
+        document.getElementById("ejecucion").innerHTML =
+            `<p>ID: ${procesoEnEjecucion.id}</p>
+             <p>Operacion: ${procesoEnEjecucion.op}</p>
+             <p>Trans: ${procesoEnEjecucion.tiempoTrans}</p>
+             <p>Restante: ${procesoEnEjecucion.tiempoMax - procesoEnEjecucion.tiempoTrans}</p>`;
+    } else {
+        document.getElementById("ejecucion").innerHTML = "<p>CPU libre</p>";
+    }
+
+    // Mostrar tabla de Bloqueados
+    let htmlBloq = "<tr><th>ID</th><th>Tiempo Bloq Rest</th></tr>";
+    bloqueados.forEach(p => {
+        htmlBloq += `<tr><td>${p.id}</td><td>${p.bloqueadoRestante}</td></tr>`;
+    });
+    document.getElementById("tablaBloqueados").innerHTML = htmlBloq;
+
+    // Mostrar tabla de Terminados
+    let htmlTerm = "<tr><th>ID</th><th>Operacion</th><th>Resultado</th></tr>";
+    terminados.forEach(p => {
+        htmlTerm += `<tr><td>${p.id}</td><td>${p.op}</td><td>${p.resultado}</td></tr>`;
+    });
+    document.getElementById("tablaTerminados").innerHTML = htmlTerm;
+}
+
+// ================================
+// Mostrar resultados finales
+// ================================
+const mostrarResultados = () => {
+    // Ocultar fase Ejecucion y mostrar Resultados
+    document.getElementById("faseEjecucion").style.display = "none";
+    document.getElementById("faseResultados").style.display = "block";
+
+    // Crear tabla con todas las mediciones de cada proceso
+    let html = "<tr><th>ID</th><th>Llegada</th><th>Final</th><th>Retorno</th><th>Respuesta</th><th>Espera</th><th>Servicio</th><th>Resultado</th></tr>";
+    terminados.forEach(p => {
+        html += `<tr>
+            <td>${p.id}</td>
+            <td>${p.llegada}</td>
+            <td>${p.finalizacion}</td>
+            <td>${p.retorno}</td>
+            <td>${p.respuesta}</td>
+            <td>${p.espera}</td>
+            <td>${p.servicio}</td>
+            <td>${p.resultado}</td>
+        </tr>`;
+    });
+    document.getElementById("tablaResultados").innerHTML = html + `<button type="button" id="btnFinalizar"> Finalizar  </button>`;
+
+    let finalizar = document.getElementById('btnFinalizar');
+    finalizar.addEventListener('click', () => {
+        location.reload();
+    })
+}
