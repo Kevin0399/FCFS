@@ -12,6 +12,7 @@ let intervalo = null; // Intervalo principal de simulacion
 let pausado = false; // Pausa de la simulacion
 let numProcesos = 0; // Cantidad total de procesos
 let idContador = 1; // Contador para asignar IDs unicos
+let contTerminados = 0; // Contador de cuantos procesos han terminado
 
 // ================================
 // Fase Inicial -> crear procesos
@@ -127,7 +128,7 @@ const tick = () => {
     // Actualizar bloqueados
     bloqueados.forEach((p, idx) => {
         p.bloqueadoRestante--;
-        if (p.bloqueadoRestante <= 0) {
+        if (p.bloqueadoRestante < 0) {
             p.estado = "Listo";
             listos.push(p);
             bloqueados.splice(idx, 1);
@@ -140,7 +141,7 @@ const tick = () => {
         intervalo = null;
         let btnResultados = document.createElement('button');
         btnResultados.innerText = "Ver Resultados";
-        document.getElementById('btnVerResultados').appendChild(btnResultados); 
+        document.getElementById('btnVerResultados').appendChild(btnResultados);
         btnResultados.addEventListener(`click`, () => {
             mostrarResultados();
         });
@@ -211,16 +212,29 @@ const render = () => {
     });
     document.getElementById("tablaListos").innerHTML = htmlListos;
 
-    // Mostrar proceso en ejecucion
-    if (procesoEnEjecucion) {
-        document.getElementById("ejecucion").innerHTML =
-            `<p>ID: ${procesoEnEjecucion.id}</p>
-             <p>Operacion: ${procesoEnEjecucion.op}</p>
-             <p>Trans: ${procesoEnEjecucion.tiempoTrans}</p>
-             <p>Restante: ${procesoEnEjecucion.tiempoMax - procesoEnEjecucion.tiempoTrans}</p>`;
-    } else {
-        document.getElementById("ejecucion").innerHTML = "<p>CPU libre</p>";
-    }
+let mensajeCPU = "";
+
+const procesosEnMemoria = listos.length + bloqueados.length + (procesoEnEjecucion ? 1 : 0);
+
+if (procesoEnEjecucion) {
+    // Proceso normal en ejecución
+    mensajeCPU = `
+        <p>ID: ${procesoEnEjecucion.id}</p>
+        <p>Operacion: ${procesoEnEjecucion.op}</p>
+        <p>Trans: ${procesoEnEjecucion.tiempoTrans}</p>
+        <p>Restante: ${procesoEnEjecucion.tiempoMax - procesoEnEjecucion.tiempoTrans}</p>
+    `;
+} else if ((procesosEnMemoria > 0 && listos.length === 0 && bloqueados.length === procesosEnMemoria) || (procesosEnMemoria <= 0)) {
+    // Todos los procesos en memoria están bloqueados → Proceso nulo
+    mensajeCPU = "CPU: Proceso nulo";
+} else {
+    // CPU libre (no hay procesos en memoria listos ni bloqueados)
+    mensajeCPU = "Cambio de Contexto";
+}
+
+document.getElementById("ejecucion").innerHTML = mensajeCPU;
+
+
 
     // Mostrar tabla de Bloqueados
     let htmlBloq = "<tr><th>ID</th><th>Tiempo Bloq Rest</th></tr>";
