@@ -13,7 +13,7 @@ let pausado = false; // Pausa de la simulacion
 let numProcesos = 0; // Cantidad total de procesos
 let idContador = 1; // Contador para asignar IDs unicos
 let contTerminados = 0; // Contador de cuantos procesos han terminado
-
+let terminadoError = false;
 // ================================
 // Fase Inicial -> crear procesos
 // ================================
@@ -125,6 +125,12 @@ const tick = () => {
         }
     }
 
+    if(terminadoError){
+        finalizarProceso(procesoEnEjecucion);
+        procesoEnEjecucion = null;
+        terminadoError = false;
+    }
+
     // Actualizar bloqueados
     bloqueados.forEach((p, idx) => {
         p.bloqueadoRestante--;
@@ -190,8 +196,9 @@ document.addEventListener("keydown", (e) => {
     } else if (tecla === "W" && procesoEnEjecucion) {
         // Terminar proceso por error
         procesoEnEjecucion.error = true;
-        finalizarProceso(procesoEnEjecucion);
-        procesoEnEjecucion = null;
+        terminadoError = true;
+        // finalizarProceso(procesoEnEjecucion);
+        // procesoEnEjecucion = null;
     } else if (tecla === "P") {
         pausado = true; // Pausar simulacion
     } else if (tecla === "C") {
